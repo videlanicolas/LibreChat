@@ -584,6 +584,9 @@ export const googleSettings = {
     step: 1 as const,
     default: 40 as const,
   },
+  batch: {
+    default: false as const,
+  },
   thinking: {
     default: true as const,
   },
@@ -920,6 +923,10 @@ export const tMessageSchema = z.object({
   unfinished: z.boolean().optional(),
   searchResult: z.boolean().optional(),
   finish_reason: z.string().optional(),
+  /* batch API */
+  batchId: z.string().optional(),
+  batchStatus: z.string().optional(),
+  isBatch: z.boolean().optional(),
   /* assistant */
   thread_id: z.string().optional(),
   /* frontend components */
@@ -1163,6 +1170,7 @@ export const tConversationSchema = z.object({
   /* artifacts */
   artifacts: z.string().optional(),
   /* google */
+  batch: z.boolean().optional(),
   context: z.string().nullable().optional(),
   examples: z.array(tExampleSchema).optional(),
   /* DB */
@@ -1347,6 +1355,10 @@ export const tQueryParamsSchema = tConversationSchema
     /** @endpoints openAI, google, anthropic */
     fileTokenLimit: true,
   })
+  .extend({
+    /** @endpoints google */
+    batch: z.boolean().optional(),
+  })
   .merge(
     z.object({
       /** @endpoints openAI, custom, azureOpenAI, google, anthropic, assistants, azureAssistants, bedrock, agents */
@@ -1468,6 +1480,8 @@ export const googleBaseSchema = tConversationSchema.pick({
   greeting: true,
   spec: true,
   maxContextTokens: true,
+}).extend({
+  batch: z.boolean().optional(),
 });
 
 export const googleSchema = googleBaseSchema

@@ -8,6 +8,9 @@ const {
   isEphemeralAgentId,
 } = require('librechat-data-provider');
 const {
+  createGoogleBatchJob,
+} = require('@librechat/api');
+const {
   toPendingSteer,
   getViolationInfo,
   buildMessageFiles,
@@ -1576,6 +1579,98 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
       ? rawAgentEventDelivery
       : undefined;
   req._agentEventTriggerProjection = getAgentEventTriggerProjection(agentEventDelivery);
+
+    const isBatchMode =
+      (endpointOption?.endpoint === EModelEndpoint.google ||
+        endpointOption?.model_parameters?.batch === true) &&
+      req.body?.batch === true;
+
+    if (isBatchMode) {
+      try {
+        const { resolveCredentials } = require('~/server/controllers/BatchController');
+        const credentials = await resolveCredentials(req);
+        const model = endpointOption?.model_parameters?.model || req.body?.model || 'gemini-1.5-flash-latest';
+        const userPrompt = text || '';
+
+        const { batchId } = await createGoogleBatchJob({
+          credentials,
+          model,
+          prompt: userPrompt,
+        });
+
+        const reqCtx = {
+          userId,
+          isTemporary:
+            req?._agentEventBindingRetention?.isTemporary ??
+            req?.resolvedConversation?.isTemporary ??
+            req?.body?.isTemporary,
+          expiredAt:
+            req?._agentEventBindingRetention?.expiredAt ?? req?.resolvedConversation?.expiredAt,
+          interfaceConfig: req?.config?.interfaceConfig,
+        };
+
+        const preliminaryUserMessage = getPreliminaryUserMessage(
+          { ...req.body, messageId: preallocatedUserMessageId },
+          conversationId,
+          req._agentEventTriggerProjection,
+        );
+
+        if (preliminaryUserMessage) {
+          await saveMessage(reqCtx, {
+            ...preliminaryUserMessage,
+            user: userId,
+            sender: 'User',
+            isCreatedByUser: true,
+            error: false,
+            unfinished: false,
+          }, { context: 'api/server/controllers/agents/request.js - batch user message' });
+        }
+
+        const initialAssistantText = 'Message sent to Batch API, waiting for reply';
+        const savedAssistantMessage = await saveMessage(reqCtx, {
+          messageId: preallocatedResponseMessageId,
+          parentMessageId: preliminaryUserMessage?.messageId || parentMessageId,
+          conversationId,
+          user: userId,
+          sender: endpointOption?.model_parameters?.model || 'Gemini Batch',
+          text: initialAssistantText,
+          batchId,
+          batchStatus: 'pending',
+          isBatch: true,
+          unfinished: true,
+          error: false,
+          model: endpointOption?.model_parameters?.model || req.body?.model,
+          endpoint: endpointOption?.endpoint || EModelEndpoint.google,
+        }, { context: 'api/server/controllers/agents/request.js - batch assistant message' });
+
+        const seedConvo = isNewConvo || req.resolvedConversation === null;
+        if (seedConvo) {
+          await saveConvo(
+            reqCtx,
+            {
+              conversationId,
+              endpoint: endpointOption?.endpoint || EModelEndpoint.google,
+              model: endpointOption?.model_parameters?.model || req.body?.model,
+              batch: true,
+            },
+            { context: 'api/server/controllers/agents/request.js - batch convo' }
+          );
+        }
+
+        startupTelemetry?.end('completed');
+        return res.json({
+          status: 'completed',
+          batchId,
+          message: savedAssistantMessage,
+          conversationId,
+          responseMessageId: preallocatedResponseMessageId,
+        });
+      } catch (batchErr) {
+        logger.error('[ResumableAgentController] Batch job creation failed', batchErr);
+        startupTelemetry?.end('rejected');
+        return res.status(500).json({ error: batchErr.message || 'Failed to submit batch job' });
+      }
+    }
 
   try {
     logger.debug(`[ResumableAgentController] Creating job`, {

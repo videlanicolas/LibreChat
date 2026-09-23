@@ -1646,6 +1646,15 @@ export function getGraphApiToken(params: q.GraphTokenParams): Promise<q.GraphTok
   return request.get(endpoints.graphToken(params.scopes));
 }
 
+export function checkBatchStatus(payload: {
+  batchId: string;
+  messageId: string;
+  conversationId?: string;
+  isTemporary?: boolean;
+}): Promise<{ status: 'pending' | 'running' | 'completed' | 'failed'; message?: s.TMessage; text?: string; error?: string }> {
+  return request.post(`${endpoints.apiBaseUrl()}/api/batch/status`, payload);
+}
+
 export function getDomainServerBaseUrl(): string {
   return `${endpoints.apiBaseUrl()}/api`;
 }
