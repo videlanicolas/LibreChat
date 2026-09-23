@@ -66,6 +66,8 @@ import QuoteButton from './QuoteButton';
 import TokenUsage from './TokenUsage';
 import StopButton from './StopButton';
 import SendButton from './SendButton';
+import CheckBatchButton from './CheckBatchButton';
+import { checkBatchStatus } from 'librechat-data-provider';
 import EditBadges from './EditBadges';
 import BadgeRow from './BadgeRow';
 import Mention from './Mention';
@@ -212,6 +214,22 @@ const ChatForm = memo(function ChatForm({
     () => (chatDirection != null ? chatDirection?.toLowerCase() === 'rtl' : false),
     [chatDirection],
   );
+  const pendingBatchMessage = useMemo(() => {
+    if (!conversation?.messages || conversation.messages.length === 0) {
+      return null;
+    }
+    const messagesArray = Array.isArray(conversation.messages) ? conversation.messages : [];
+    for (let i = messagesArray.length - 1; i >= 0; i--) {
+      const msg = typeof messagesArray[i] === 'object' ? (messagesArray[i] as unknown as TMessage) : null;
+      if (msg && msg.isBatch && msg.batchId && (msg.batchStatus === 'pending' || msg.batchStatus === 'running' || msg.unfinished)) {
+        return msg;
+      }
+    }
+    return null;
+  }, [conversation?.messages]);
+
+  const hasPendingBatch = Boolean(pendingBatchMessage);
+
   const invalidAssistant = useMemo(
     () =>
       isAssistantsEndpoint(endpoint) &&
@@ -220,8 +238,8 @@ const ChatForm = memo(function ChatForm({
     [conversation?.assistant_id, endpoint, assistantMap],
   );
   const disableInputs = useMemo(
-    () => requiresKey || invalidAssistant,
-    [requiresKey, invalidAssistant],
+    () => requiresKey || invalidAssistant || hasPendingBatch,
+    [requiresKey, invalidAssistant, hasPendingBatch],
   );
 
   /** Skipped on touchscreens so a tap does not raise the keyboard. */
@@ -566,6 +584,72 @@ const ChatForm = memo(function ChatForm({
 
   const isMoreThanThreeRows = visualRowCount > 3;
 
+  const [checkingBatch, setCheckingBatch] = useState(false);
+
+  const isBatchModeToggled = conversation?.batch === true;
+  const showCheckBatchButton = isBatchModeToggled || hasPendingBatch;
+
+  const handleCheckBatchStatus = useCallback(async () => {
+    if (!pendingBatchMessage || !pendingBatchMessage.batchId) {
+      return;
+    }
+    setCheckingBatch(true);
+    try {
+      const res = await checkBatchStatus({
+        batchId: pendingBatchMessage.batchId,
+        messageId: pendingBatchMessage.messageId,
+        conversationId: conversation?.conversationId ?? undefined,
+        isTemporary,
+      });
+
+      if (res.status === 'completed' && res.text) {
+        setConversation((prev) => {
+          if (!prev) return prev;
+          const updatedMessages = (prev.messages || []).map((m) => {
+            if (typeof m === 'object' && (m as TMessage).messageId === pendingBatchMessage.messageId) {
+              return {
+                ...(m as TMessage),
+                text: res.text,
+                batchStatus: 'completed',
+                unfinished: false,
+                error: false,
+              };
+            }
+            return m;
+          });
+          return {
+            ...prev,
+            messages: updatedMessages as any,
+          };
+        });
+      } else if (res.status === 'failed') {
+        setConversation((prev) => {
+          if (!prev) return prev;
+          const updatedMessages = (prev.messages || []).map((m) => {
+            if (typeof m === 'object' && (m as TMessage).messageId === pendingBatchMessage.messageId) {
+              return {
+                ...(m as TMessage),
+                text: `Error: ${res.error || 'Batch job failed.'}`,
+                batchStatus: 'failed',
+                unfinished: false,
+                error: true,
+              };
+            }
+            return m;
+          });
+          return {
+            ...prev,
+            messages: updatedMessages as any,
+          };
+        });
+      }
+    } catch (err) {
+      console.error('Error checking batch status:', err);
+    } finally {
+      setCheckingBatch(false);
+    }
+  }, [pendingBatchMessage, conversation?.conversationId, isTemporary, setConversation]);
+
   /** One button slot while a run is generating: with composer text the send
    *  button takes over (Enter steers/queues; hover reveals all actions);
    *  clearing the text restores Stop. */
@@ -903,19 +987,29 @@ const ChatForm = memo(function ChatForm({
                   !answerMode.composerAnswers
                     ? duringRunSlot
                     : endpoint && (
-                        <SendButton
-                          ref={submitButtonRef}
-                          control={methods.control}
-                          fileCount={submittableFileCount}
-                          disabled={
-                            filesLoading ||
-                            disableInputs ||
-                            !codeWorkspace.canSubmit ||
-                            isNotAppendable ||
-                            answerMode.composerLocked ||
-                            (isSubmitting && !answerMode.composerAnswers)
-                          }
-                        />
+                        <div className="flex items-center gap-2">
+                          {showCheckBatchButton && (
+                            <CheckBatchButton
+                              disabled={!hasPendingBatch || checkingBatch}
+                              checking={checkingBatch}
+                              onClick={handleCheckBatchStatus}
+                            />
+                          )}
+                          <SendButton
+                            ref={submitButtonRef}
+                            control={methods.control}
+                            fileCount={submittableFileCount}
+                            disabled={
+                              hasPendingBatch ||
+                              filesLoading ||
+                              disableInputs ||
+                              !codeWorkspace.canSubmit ||
+                              isNotAppendable ||
+                              answerMode.composerLocked ||
+                              (isSubmitting && !answerMode.composerAnswers)
+                            }
+                          />
+                        </div>
                       )}
                 </div>
               </div>

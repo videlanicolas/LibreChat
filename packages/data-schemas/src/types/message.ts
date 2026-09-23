@@ -121,6 +121,9 @@ export interface IMessage extends Document {
     };
     controlReceipts?: ISubagentTaskControlReceipt[];
   };
+  batchId?: string;
+  batchStatus?: string;
+  isBatch?: boolean;
   subagentTriggerProjection?: SubagentTriggerProjection;
   contextMeta?: Partial<IAgentEventActorContextMeta>;
   attachments?: unknown[];

@@ -159,6 +159,16 @@ const messageSchema: Schema<IMessage> = new Schema(
       select: false,
       default: undefined,
     },
+    batchId: {
+      type: String,
+    },
+    batchStatus: {
+      type: String,
+    },
+    isBatch: {
+      type: Boolean,
+      default: false,
+    },
     subagentActivityProjection: {
       type: {
         taskId: { type: String, required: true },
